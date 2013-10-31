@@ -1,100 +1,178 @@
-#define cm_5 800 /*change this*/
-#define cal_left 500
-#define cal_right 500
-unsigned char
-	//IRs
-	ir_front = 3,
-	ir_left = 5,
-	ir_right = 1,
-	ir_left_45 = 4,
-	ir_right_45 = 2,
-	//headlights
-	headlght_left = 13,
-	headlight_right = 12,
-	//grounds
-	ground_left = 5,
-	ground_right = 4,
-	//statics
-	speed_left = cal_left,
-	speed_right = cal_right,
-	trigger_dist_phase2 = 500;
+//distance calibration trigger points in IR
+#define block_1_away 225
+#define block_2_away 100
+
+
+
+
+
+
+
+
+//trigger value for motor to stop to pass into phase 2 of game
+#define trigger_dist_phase2 500
+
+//infrared 45deg calibration if a block is present on the side
+#define irSides 225
+
+
+
+
+
+void resetSpeed(){
+	speed_left = max_left, speed_right = max_right;
+}
+
+/*calibration functions*/
+
+/*aligns*/
+void align(){
+	forward(100);
+	while (analogRead(ir_front) < block_1_away);
+	decelerate(100,0);
+}
+
+/*pivots*/
+//CALIBRATE pivotLeft_t
+void pivotLeft(int deg){
+	m.setSpeed(0,map(pivot_power,0,100,0,speed_right));
+	delay(map(deg ,0,360, 0,pivotLeft_t));
+	brake();
+}
+
+//CALIBRATE pivotRight_t
+void pivotRight(int deg){
+	m.setSpeed(map(pivot_power,0,100,0,speed_left),0);
+	delay(map(deg ,0,360, 0,pivotRight_t));
+	brake();
+}
+
+
+/*FORWARD AND BACKWARD*/
+//maps power as % from 0 to the max_power
+void forward(unsigned char power){
+	resetSpeed(); //statics speed_left and speed_right == max_power
+	m.setSpeed(map(power,0,100,0,speed_left),map(power,0,100,0,speed_right));
+}
+void backward(unsigned char power){
+	resetSpeed();
+	m.setSpeed(-map(power,0,100,0,speed_left),-map(power,0,100,0,speed_right));
+}
+
+
+/*FULL FUNCTIONS*/
+
+//decelerate by time, 0 means fast as possible
+void decelerate(int power, int time){
+	int i = power;
+	while(i > 0){
+		i--;
+		forward(i);
+		delay(time/power);
+	}
+}
+void accelerate(int power, int time){
+	int i = 0;
+	while(i < power){
+		i++;
+		forward(i);
+		delay(time/power);
+	}
+}
 
 void frontTouch(){
-	forward();
-	while (!digitalRead(headlght_left) || !digitalRead(headlight_right));
-	if (digitalRead(headlght_left)){
-		//// change the right speed
-		m.setSpeed(0, 100);
-		while (!digitalRead(headlight_right));
-		m.setSpeed(0,0);
-	}
-	else {
-		///// change left speed
-		m.setSpeed(100, 0);
-		while (!digitalRead(headlght_left));
-		m.setSpeed(0,0);
-	}
+	forward(50);
+	attachInterrupt(0, touch_left,RISING);
+	attachInterrupt(1, touch_right, RISING);
 }
 
-unsigned int present = 500;
-void forward(){
-	speed_left = cal_left, speed_right = cal_right;
-	m.setSpeed(speed_left,speed_right);
+
+/*DO NOT EDIT, INTERRUPTS*/
+void touch_left(){
+	detachInterrupt(0);
+	detachInterrupt(1);
+	m.setSpeed(-map(20, 0,100, 0,speed_left), map(20, 0,100, 0,speed_right));
+	attachInterrupt(1, brake, RISING);
 }
-void checkBlock(boolean side, boolean stop_at /*no block (false) or until block is present (true)*/){
-	unsigned char side_sense = ir_right;
-	if (side) side_sense = ir_left;
-	if (stop_at) while (analogRead(side_sense) > present);
-	else while(analogRead(side_sense) < present);
+void touch_right(){
+	detachInterrupt(0);
+	detachInterrupt(1);
+	m.setSpeed(-map(20, 0,100, 0,speed_left), map(20, 0,100, 0,speed_right));
+	attachInterrupt(0, brake, RISING);
+}
+void brake(){
 	m.setSpeed(0,0);
+}
+//////////////////////////////
+
+/*no-block (false) or block (true)*/
+//delays the program until block or no block is seen
+void checkBlock(boolean side, boolean stop_at){
+	unsigned char side_sense = ir_right_45;
+	if (side) side_sense = ir_left_45;
+	if (stop_at) while (analogRead(side_sense) > irSides);
+	else while(analogRead(side_sense) < irSides);
 }
 
 // attach to a distance 1 block away
-void kissMe(int dist){
-	forward();
-	while (analogRead(ir_front) < dist){ /*alignment trigger*/
-		if (analogRead(ir_left)>cm_5){
+void kissMe(int dist, int power){
+	forward(power);
+	while (analogRead(ir_front) < dist){
+		//alignment
+		if (!digitalRead(ir_left)){
+			if(speed_left < 255 && speed_left < max_left +20)
 			speed_left++;
+			if(speed_right > max_right -20)
 			speed_right--;
 			m.setSpeed(speed_left,speed_right);
 		}
-		if (analogRead(ir_right)>cm_5){
-			speed_right++;
-			speed_left--;
+		if (!digitalRead(ir_right)){
+			if(speed_left > max_left -20)
+				speed_left--;
+			if(speed_right < 255 && speed_right < max_right +20)
+				speed_right++;
 			m.setSpeed(speed_left, speed_right);
 		}
 	}
-	m.setSpeed(0,0); /*brakes*/
+	decelerate(power,0);
 }
 
 ////////////Calibrate delays (*Caution hypothetical*)
 void cross_bridge(){
-	forward();
+	forward(100);
 	while (analogRead(ir_front) < trigger_dist_phase2){
 		if(!digitalRead(ground_left)){
-			m.setSpeed(-speed_left, -speed_right);
+			backward(50);
+			//calibrate
 			delay(100);
-			m.setSpeed(0,0);
-			m.setSpeed(speed_left + 10, speed_right);
+			brake();
+			m.setSpeed(speed_left*.5,-speed_right*.5);
+			//calibrate
 			delay(100);
-			forward();
+			forward(100);
 		}
 		if(!digitalRead(ground_right)){
-			m.setSpeed(-speed_left, -speed_right);
+			backward(50);
+			//calibrate
 			delay(100);
-			m.setSpeed(0,0);
-			m.setSpeed(speed_left, speed_right + 10);
+			brake();
+			m.setSpeed(-speed_left*.5, speed_right*.5);
+			//calibrate
 			delay(100);
-			forward();
+			forward(100);
 		}
 	}
 }
 
-/***Turning algorithm****/
-int
-	calibrated_turn90 = 300, /*300ms to turn */
-	calibrated_turn180 = 600; /*600ms to turn */
 //from front touch
-void turn_type1(){
 
+
+//inset direction, and how many degrees
+void turn(bool dir, int deg){
+	resetSpeed();
+	if(dir)m.setSpeed(-speed_left,speed_right);
+	else m.setSpeed(speed_left,-speed_right);
+	//calibrate
+	delay(map(deg, 0,360, 0,max_360));
+	m.setSpeed(0,0);
 }
